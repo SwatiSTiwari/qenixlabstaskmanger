@@ -3,12 +3,15 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  forwardRef,
+  Inject,
 } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model, SortOrder, Types } from 'mongoose';
 import { Task, TaskStatus } from './schemas/task.schema';
 import { CreateTaskDto, UpdateTaskDto } from './dto';
 import { UserRole } from '../users/schemas/user.schema';
+import { TasksGateway } from './tasks.gateway';
 
 interface TaskFilters {
   status?: TaskStatus;
@@ -19,7 +22,11 @@ interface TaskFilters {
 
 @Injectable()
 export class TasksService {
-  constructor(@InjectModel(Task.name) private taskModel: Model<Task>) {}
+  constructor(
+    @InjectModel(Task.name) private taskModel: Model<Task>,
+    @Inject(forwardRef(() => TasksGateway))
+    private tasksGateway: TasksGateway,
+  ) {}
 
   async create(createTaskDto: CreateTaskDto, userId: string): Promise<Task> {
     const task = await this.taskModel.create({
@@ -28,7 +35,9 @@ export class TasksService {
       assignedTo: createTaskDto.assignedTo || null,
     });
 
-    return task.populate('createdBy assignedTo', 'name email');
+    const populated = await task.populate('createdBy assignedTo', 'name email');
+    this.tasksGateway.emitTaskCreated(populated);
+    return populated;
   }
 
   async findAll(
@@ -106,6 +115,7 @@ export class TasksService {
       .findByIdAndUpdate(taskId, updateTaskDto, { new: true })
       .populate('createdBy assignedTo', 'name email');
 
+    this.tasksGateway.emitTaskUpdated(updatedTask);
     return updatedTask;
   }
 
@@ -125,6 +135,7 @@ export class TasksService {
 
     await this.taskModel.findByIdAndDelete(taskId);
 
+    this.tasksGateway.emitTaskDeleted(taskId);
     return { message: 'Task deleted successfully' };
   }
 
