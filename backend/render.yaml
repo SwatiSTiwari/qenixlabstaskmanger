@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: taskmanager-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm install && npm run build
+    buildFilter:
+      paths:
+        - backend/**
+    startCommand: node dist/main
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 3001
+      - key: MONGODB_URI
+        sync: false   # set manually in Render dashboard
+      - key: JWT_SECRET
+        sync: false   # set manually in Render dashboard
+      - key: JWT_EXPIRATION
+        value: 24h
+      - key: FRONTEND_URL
+        sync: false   # set to your Vercel URL after deploying frontend
