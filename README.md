@@ -5,12 +5,14 @@ A production-ready full-stack task management application with modern UI, built 
 ## Tech Stack
 
 **Backend:**
+
 - NestJS 10 - Node.js framework with TypeScript
 - MongoDB Atlas - Managed NoSQL database in the cloud
 - Mongoose - MongoDB object modeling
 - JWT - Stateless authentication with Passport.js
 
 **Frontend:**
+
 - Next.js 16 - React framework with App Router
 - TypeScript - Type-safe development
 - shadcn/ui - Premium component library
@@ -20,6 +22,7 @@ A production-ready full-stack task management application with modern UI, built 
 ## Features
 
 ### Core Functionality
+
 - **User Authentication**: Register and login with JWT tokens
 - **Task Management**: Create, read, update, and delete tasks
 - **Role-Based Access Control (RBAC)**: Admin and Member roles with different permissions
@@ -27,6 +30,7 @@ A production-ready full-stack task management application with modern UI, built 
 - **Responsive UI**: Mobile-friendly design with shadcn/ui components
 
 ### RBAC Permissions
+
 - **Admin**: Can view all tasks, edit/delete any task, assign tasks to team members
 - **Member**: Can only manage tasks they created or are assigned to
 
@@ -58,72 +62,81 @@ A production-ready full-stack task management application with modern UI, built 
 ### Backend Setup
 
 1. **Navigate to backend directory:**
+
    ```bash
    cd backend
    ```
-
 2. **Install dependencies:**
+
    ```bash
    pnpm install
    ```
-
 3. **Set up MongoDB Atlas:**
+
    - Go to [MongoDB Atlas](https://www.mongodb.com/cloud/atlas)
    - Create a free account or sign in
    - Create a new cluster (free tier available)
    - Get your connection string: `mongodb+srv://username:password@cluster.mongodb.net/database-name`
    - Replace `username` and `password` with your credentials
-
 4. **Configure environment variables:**
    Copy `.env.example` to `.env` and add your MongoDB Atlas connection string:
+
    ```bash
    cp .env.example .env
    ```
-   Update `MONGODB_URI` with your MongoDB Atlas connection string.
 
+   Update `MONGODB_URI` with your MongoDB Atlas connection string.
 5. **Seed the database (optional):**
+
    ```bash
    pnpm run seed
    ```
+
    This creates demo users:
+
    - Admin user: `admin@task.com` / password `admin123`
    - Member user: `member1@task.com` / password `member123`
    - 4 sample tasks with various statuses
-
 6. **Start the development server:**
+
    ```bash
    pnpm run start:dev
    ```
+
    Backend runs on `http://localhost:3001`
 
 ### Frontend Setup
 
 1. **Install dependencies:**
+
    ```bash
    pnpm install
    ```
-
 2. **Set environment variables:**
    Create `.env.local`:
+
    ```
    NEXT_PUBLIC_API_URL=http://localhost:3001
    ```
-
 3. **Start development server:**
+
    ```bash
    pnpm run dev
    ```
+
    Frontend runs on `http://localhost:3000`
 
 ## Running Both Services
 
 **Terminal 1 - Backend:**
+
 ```bash
 cd backend
 pnpm run start:dev
 ```
 
 **Terminal 2 - Frontend:**
+
 ```bash
 pnpm run dev
 ```
@@ -133,6 +146,7 @@ pnpm run dev
 ### Authentication Endpoints
 
 **POST /auth/register**
+
 ```json
 {
   "name": "John Doe",
@@ -142,6 +156,7 @@ pnpm run dev
 ```
 
 **POST /auth/login**
+
 ```json
 {
   "email": "john@example.com",
@@ -150,6 +165,7 @@ pnpm run dev
 ```
 
 Response:
+
 ```json
 {
   "token": "eyJhbGc...",
@@ -167,6 +183,7 @@ Response:
 All task endpoints require JWT authentication via `Authorization: Bearer <token>` header.
 
 **POST /tasks** - Create task
+
 ```json
 {
   "title": "Implement feature",
@@ -177,6 +194,7 @@ All task endpoints require JWT authentication via `Authorization: Bearer <token>
 ```
 
 **GET /tasks** - List tasks (with optional filters)
+
 ```
 GET /tasks?status=todo&priority=high&sortBy=dueDate&order=asc
 ```
@@ -184,6 +202,7 @@ GET /tasks?status=todo&priority=high&sortBy=dueDate&order=asc
 **GET /tasks/:id** - Get single task
 
 **PATCH /tasks/:id** - Update task
+
 ```json
 {
   "status": "in-progress",
@@ -197,15 +216,16 @@ GET /tasks?status=todo&priority=high&sortBy=dueDate&order=asc
 
 Use these accounts to test the application:
 
-| Role   | Email              | Password    |
-|--------|-------------------|-------------|
-| Admin  | admin@task.com    | admin123    |
-| Member | member1@task.com  | member123   |
-| Member | member2@task.com  | member123   |
+| Role   | Email            | Password  |
+| ------ | ---------------- | --------- |
+| Admin  | admin@task.com   | admin123  |
+| Member | member1@task.com | member123 |
+| Member | member2@task.com | member123 |
 
 ## Build for Production
 
 ### Backend
+
 ```bash
 cd backend
 pnpm run build
@@ -213,26 +233,13 @@ pnpm run start:prod
 ```
 
 ### Frontend
+
 ```bash
 pnpm run build
 pnpm start
 ```
 
 ## Environment Variables
-
-### Backend (.env)
-```
-MONGODB_URI=mongodb://localhost:27017/taskmanager
-JWT_SECRET=your-super-secret-jwt-key-change-this-in-production
-JWT_EXPIRATION=24h
-NODE_ENV=development
-PORT=3001
-```
-
-### Frontend (.env.local)
-```
-NEXT_PUBLIC_API_URL=http://localhost:3001
-```
 
 ## Architecture Notes
 
@@ -241,16 +248,19 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design, decision ex
 ## Common Issues
 
 **MongoDB connection failed:**
+
 - Ensure MongoDB is running
 - Check MONGODB_URI in .env is correct
 - Default: `mongodb://localhost:27017/taskmanager`
 
 **API calls returning 401:**
-- Token has expired (24h default)
+
+- Token has expired (7d default)
 - User is not authenticated
 - Clear localStorage and login again
 
 **CORS errors:**
+
 - Frontend must be on configured origin (default: http://localhost:3000)
 - Check CORS settings in main.ts
 
@@ -267,20 +277,10 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system design, decision ex
 ### Debugging
 
 Enable debug logs in NestJS:
+
 ```bash
 DEBUG=* pnpm run start:dev
 ```
-
-## Next Steps / Future Enhancements
-
-- Add email notifications for task assignments
-- Implement real-time updates using WebSockets
-- Add task comments and activity log
-- Create admin dashboard for user management
-- Add file upload for task attachments
-- Implement advanced filtering and search
-- Add task templates
-- Implement recurring tasks
 
 ## License
 
