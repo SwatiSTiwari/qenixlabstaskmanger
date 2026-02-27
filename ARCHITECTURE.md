@@ -1,420 +1,329 @@
-# System Architecture
+# ARCHITECTURE.md
 
-## Overview
+---
 
-This is a full-stack task management application using a traditional three-tier architecture:
+## 1. System Overview
 
-```
-┌─────────────────────────────────────────────────────────────┐
-│                      Frontend (Next.js 16)                   │
-│  • React components with TypeScript                          │
-│  • Client-side routing and state management                  │
-│  • JWT token handling and API integration                    │
-└─────────────────────────────────────────────────────────────┘
-                            │
-                    ┌───────▼────────┐
-                    │   API Layer    │
-                    │  (HTTP REST)   │
-                    └───────┬────────┘
-                            │
-┌─────────────────────────────────────────────────────────────┐
-│                   Backend (NestJS)                           │
-│  • RESTful API endpoints                                     │
-│  • Business logic and validation                             │
-│  • JWT authentication and RBAC                               │
-│  • Database interaction via Mongoose                         │
-└─────────────────────────────────────────────────────────────┘
-                            │
-┌─────────────────────────────────────────────────────────────┐
-│                 Database (MongoDB)                           │
-│  • User documents with hashed passwords                      │
-│  • Task documents with references to users                   │
-└─────────────────────────────────────────────────────────────┘
-```
+TaskFlow is a full-stack task management application that lets authenticated users create, assign, filter, and track tasks in real time. It is built across three layers that communicate over HTTP and WebSockets.
 
-## Backend Architecture
+The **Next.js 16 frontend** (port 3000) is a React single-page app. It stores the JWT in `localStorage`, attaches it to every REST call via an `Authorization: Bearer` header, and simultaneously maintains a persistent Socket.IO connection to receive live task events without polling.
 
-### Module Structure
+The **NestJS backend** (port 3001) exposes a REST API for CRUD operations and a Socket.IO gateway on the `/tasks` namespace. Every REST route is guarded by `JwtAuthGuard`, which validates the token with PassportJS before the controller runs. The same JWT is verified inside the WebSocket gateway's middleware so unauthenticated sockets are rejected before connection is established. Business logic is organised into two NestJS modules — `AuthModule` and `TasksModule`.
 
-**auth.module.ts**
-- Handles user registration and login
-- Generates JWT tokens
-- Validates credentials with bcrypt
-- Provides JWT strategy for Passport
+**MongoDB** (via Mongoose) is the persistence layer. It holds two collections: `users` (hashed credentials + role) and `tasks` (content + ObjectId references to users). Mongoose population resolves `createdBy` and `assignedTo` fields into full user objects before responses are returned.
 
-**tasks.module.ts**
-- CRUD operations for tasks
-- Role-based authorization
-- Query filtering and sorting
-- Returns properly populated references
+---
 
-### Authentication Flow
+## 2. Folder Structure
 
 ```
-1. User submits email + password → RegisterDto/LoginDto
-2. Backend validates input (class-validator)
-3. Password hashed with bcrypt (register) or compared (login)
-4. JWT generated with user payload (sub, email, role)
-5. Token returned to frontend
-6. Frontend stores token in localStorage
-7. Subsequent requests include: Authorization: Bearer <token>
-8. JwtStrategy decodes and validates token
-9. Request.user populated with decoded payload
+taskmanager/                     ← Next.js frontend root
+├── app/
+│   ├── layout.tsx               ← Root layout: wraps AuthProvider + Toaster
+│   ├── page.tsx                 ← Root redirect (→ /dashboard or /login)
+│   ├── (auth)/                  ← Route group with centered auth layout
+│   │   ├── login/page.tsx
+│   │   └── register/page.tsx
+│   └── (dashboard)/             ← Route group with sidebar+header layout
+│       └── dashboard/page.tsx   ← Main task page with real-time integration
+├── components/
+│   ├── auth/                    ← LoginForm, RegisterForm
+│   ├── layout/                  ← DashboardSidebar, DashboardHeader
+│   ├── tasks/                   ← TaskCard, TaskList, TaskDialog, TaskFilters
+│   └── ui/                      ← shadcn/ui primitives (button, badge, etc.)
+├── context/
+│   └── AuthContext.tsx          ← Global auth state (user, token, login, logout)
+├── hooks/
+│   ├── use-task-socket.ts       ← Socket.IO client hook (real-time events)
+│   └── use-toast.ts
+├── lib/
+│   ├── api.ts                   ← Typed fetch wrapper + authService/taskService
+│   └── utils.ts
+├── types/
+│   ├── auth.ts                  ← User, AuthContextType interfaces
+│   └── task.ts                  ← Task, TaskStatus, TaskPriority enums
+└── public/                      ← Static assets (custom SVG favicon)
+
+backend/                         ← NestJS backend root
+└── src/
+    ├── main.ts                  ← Bootstrap: IoAdapter, CORS, ValidationPipe
+    ├── app.module.ts            ← Root module: ConfigModule, MongooseModule
+    ├── auth/
+    │   ├── auth.module.ts       ← Imports JwtModule, PassportModule
+    │   ├── auth.controller.ts   ← POST /auth/register, POST /auth/login
+    │   ├── auth.service.ts      ← bcrypt hash/compare, JWT sign
+    │   ├── dto/index.ts         ← RegisterDto, LoginDto, AuthResponseDto
+    │   └── strategies/
+    │       └── jwt.strategy.ts  ← Extracts and validates Bearer token
+    ├── tasks/
+    │   ├── tasks.module.ts      ← Imports MongooseModule + JwtModule
+    │   ├── tasks.controller.ts  ← REST handlers (all behind JwtAuthGuard)
+    │   ├── tasks.service.ts     ← Business logic + emits WebSocket events
+    │   ├── tasks.gateway.ts     ← @WebSocketGateway /tasks, JWT middleware
+    │   ├── dto/index.ts         ← CreateTaskDto, UpdateTaskDto
+    │   └── schemas/
+    │       └── task.schema.ts   ← Mongoose Task schema
+    ├── users/
+    │   └── schemas/
+    │       └── user.schema.ts   ← Mongoose User schema
+    └── common/
+        ├── decorators/
+        │   ├── current-user.decorator.ts  ← Extracts req.user into param
+        │   └── roles.decorator.ts         ← @Roles() metadata setter
+        └── guards/
+            ├── jwt-auth.guard.ts          ← Validates JWT on every request
+            └── roles.guard.ts             ← Checks role metadata
 ```
 
-### Authorization (RBAC)
+**Why this structure?**
+The frontend uses Next.js route groups `(auth)` and `(dashboard)` so each section gets its own layout without the group name appearing in the URL. Components are split by domain (auth, tasks, layout, ui) rather than by type so related files stay together. The backend follows NestJS convention — one folder per module, each containing its controller, service, gateway, DTOs, and schema. `common/` holds cross-cutting concerns (guards, decorators) that do not belong to any single module.
 
-**JwtAuthGuard**
-- Validates JWT token exists and is valid
-- Throws 401 if missing or expired
-- Applied to all protected routes
+---
 
-**RolesGuard**
-- Checks user.role against @Roles() metadata
-- Throws 403 if user lacks required role
-- Used with @Roles('admin') on specific endpoints
+## 3. Database Schema
 
-**Permission Levels**
-- Admin: Access to all resources and actions
-- Member: Limited to own resources (created or assigned tasks)
+### User Schema — `users` collection
 
-### Database Schemas
-
-**User Schema**
 ```typescript
-{
-  name: string,
-  email: string (unique),
-  password: string (hashed),
-  role: 'admin' | 'member' (default: 'member'),
-  createdAt: Date,
-  updatedAt: Date
+@Schema({ timestamps: true })
+export class User extends Document {
+  @Prop({ required: true })
+  name: string;
+  // Display name shown in the UI header and task cards.
+
+  @Prop({ required: true, unique: true })
+  email: string;
+  // Login identifier. The unique index is enforced at the MongoDB level.
+
+  @Prop({ required: true })
+  password: string;
+  // bcrypt hash (cost factor 10). Never returned in any response.
+
+  @Prop({ enum: UserRole, default: UserRole.MEMBER })
+  role: 'admin' | 'member';
+  // Controls RBAC: admins see all tasks; members see only their own.
+
+  createdAt: Date;  // Auto-set by { timestamps: true }
+  updatedAt: Date;  // Auto-updated by { timestamps: true }
 }
 ```
 
-**Task Schema**
+### Task Schema — `tasks` collection
+
 ```typescript
-{
-  title: string,
-  description: string,
-  status: 'todo' | 'in-progress' | 'done',
-  priority: 'low' | 'medium' | 'high',
-  dueDate: Date | null,
-  createdBy: ObjectId (ref: User),
-  assignedTo: ObjectId | null (ref: User),
-  createdAt: Date,
-  updatedAt: Date
+@Schema({ timestamps: true })
+export class Task extends Document {
+  @Prop({ required: true })
+  title: string;
+  // Short task name — required field, displayed as the card heading.
+
+  @Prop({ default: '' })
+  description: string;
+  // Optional longer details. Defaults to empty string so the field always exists.
+
+  @Prop({ enum: TaskStatus, default: TaskStatus.TODO })
+  status: 'todo' | 'in-progress' | 'done';
+  // Lifecycle state. Drives the colour of the status badge on TaskCard.
+
+  @Prop({ enum: TaskPriority, default: TaskPriority.MEDIUM })
+  priority: 'low' | 'medium' | 'high';
+  // Used for frontend filtering and the priority badge colour.
+
+  @Prop({ type: Date, default: null })
+  dueDate: Date | null;
+  // Optional deadline. Stored as null when the user does not provide one.
+
+  @Prop({ type: Types.ObjectId, ref: 'User', required: true })
+  createdBy: Types.ObjectId;
+  // Set to req.user.userId on creation. Used for ownership checks
+  // (members can only update/delete tasks they created).
+
+  @Prop({ type: Types.ObjectId, ref: 'User', default: null })
+  assignedTo: Types.ObjectId | null;
+  // Optional — a second user who can view and work on the task.
+  // Members who are assigned a task can read it even if they did not create it.
+
+  createdAt: Date;  // Auto-set by { timestamps: true }
+  updatedAt: Date;  // Auto-updated by { timestamps: true }
 }
 ```
 
-## Frontend Architecture
+Both `createdBy` and `assignedTo` are Mongoose refs. The service always calls `.populate('createdBy assignedTo', 'name email')` before returning data so the frontend receives full user objects instead of raw ObjectIds.
 
-### State Management
+---
 
-**AuthContext**
-- Stores authenticated user and JWT token
-- Methods: login, register, logout
-- Persists token to localStorage
-- Provides useAuth() hook for components
+## 4. API Endpoints
 
-**Component State**
-- Task list, filters managed with React useState
-- API calls trigger data re-fetching
+### Auth — no token required
 
-### Routing Structure
+| Method | Path | Request Body | Response |
+|--------|------|-------------|----------|
+| `POST` | `/auth/register` | `{ name, email, password, role? }` | `{ token, user: { id, name, email, role } }` |
+| `POST` | `/auth/login` | `{ email, password }` | `{ token, user: { id, name, email, role } }` |
 
-```
-/
-├── (auth)                    # Auth layout (centered form)
-│   ├── /login
-│   └── /register
-├── (dashboard)               # Dashboard layout (sidebar + header)
-│   └── /dashboard           # Main task management page
-└── /                        # Root redirects based on auth state
-```
+### Tasks — JWT required on every route (`Authorization: Bearer <token>`)
 
-### API Integration
+| Method | Path | Query / Body | Response |
+|--------|------|-------------|----------|
+| `GET` | `/tasks` | Query: `status?`, `priority?`, `sortBy?`, `order?` | `Task[]` (role-filtered) |
+| `GET` | `/tasks/:id` | — | `Task` |
+| `POST` | `/tasks` | `{ title, description?, priority?, dueDate?, assignedTo? }` | `Task` (created) |
+| `PATCH` | `/tasks/:id` | Any subset of task fields, including `status` | `Task` (updated) |
+| `DELETE` | `/tasks/:id` | — | `{ message: "Task deleted successfully" }` |
 
-**lib/api.ts**
-- Base fetch wrapper with token injection
-- Centralized error handling
-- Typed responses
-- Auth and task service methods
+**Role filtering on `GET /tasks`:**
+- `admin` — returns every task in the database
+- `member` — returns tasks where `createdBy = userId` OR `assignedTo = userId`
 
-**Error Handling**
-- 401: Redirect to login
-- 403: Show permission error
-- 404: Show not found error
-- 500: Generic error message
+**Ownership rules on `PATCH` / `DELETE`:**
+- `admin` — can modify any task
+- `member` — can only modify tasks where `createdBy = userId`; assignees can read but not mutate
 
-### Component Hierarchy
+### WebSocket Gateway — namespace `/tasks`
 
-```
-RootLayout
-├── AuthProvider
-├── (auth)
-│   └── LoginForm / RegisterForm
-├── (dashboard)
-│   ├── DashboardSidebar
-│   ├── DashboardHeader
-│   └── Dashboard Page
-│       ├── TaskListComponent
-│       │   └── TaskCard (repeated)
-│       ├── TaskFilters
-│       └── TaskDialog
-└── ProtectedRoute (wrapper for protected pages)
-```
+Connection handshake must include `{ auth: { token } }`. Unauthenticated connections receive an error and are dropped.
 
-## Key Architectural Decisions
+| Event (server → client) | Payload | When emitted |
+|--------------------------|---------|--------------|
+| `task.created` | Full populated `Task` object | After successful `POST /tasks` |
+| `task.updated` | Full populated `Task` object | After successful `PATCH /tasks/:id` |
+| `task.deleted` | `{ taskId: string }` | After successful `DELETE /tasks/:id` |
 
-### Why NestJS?
-- **Structure**: Clear separation of concerns with modules, controllers, services
-- **RBAC**: Built-in decorators and middleware for role-based access
-- **Validation**: Class-validator for automatic DTO validation
-- **Dependency Injection**: Cleaner, more testable code
-- **TypeScript**: Full type safety for backend development
+---
 
-### Why MongoDB + Mongoose?
-- **Flexibility**: Schema flexibility for rapid prototyping
-- **References**: Mongoose supports references between documents
-- **Simplicity**: Easy to get started, good for CRUD applications
-- **Performance**: Adequate for small-to-medium workloads
-- **Scalability**: Can add sharding if needed later
+## 5. Auth Flow
 
-### Why JWT + Stateless Auth?
-- **Scalability**: No server-side session storage needed
-- **Microservices**: Easily works across multiple services
-- **Mobile-friendly**: Works well with native apps
-- **Standard**: Industry-standard approach
-
-### Why Context API (not Redux/Zustand)?
-- **Simplicity**: Small app, minimal state management needs
-- **No dependencies**: Reduces bundle size
-- **Learning curve**: Context API is built-in React
-- **Trade-off**: Could migrate to Zustand if complexity grows
-
-### Monolithic Architecture (not Microservices)
-- **Scope**: Single application, not multiple independent services
-- **Simplicity**: Easier deployment and development
-- **Trade-off**: Could split into services if auth becomes bottleneck
-
-## Data Flow
-
-### Creating a Task
+### Register
 
 ```
-1. User fills form in TaskDialog
-2. Form validated on client
-3. POST /tasks with title, description, priority, etc.
-4. Request includes Authorization header with token
-5. Backend:
-   - JwtAuthGuard validates token
-   - Extracts userId from token
-   - Sets createdBy to current userId
-   - Validates DTO with class-validator
-   - Saves to MongoDB
-   - Populates user references
-   - Returns Task document
-6. Frontend receives response
-7. UI refreshes with new task
+1. User submits RegisterForm → POST /auth/register { name, email, password, role }
+2. RegisterDto validated by class-validator (email format, password ≥ 6 chars)
+3. AuthService queries MongoDB for existing email → 409 ConflictException if found
+4. Password hashed: bcrypt.hash(password, 10)
+5. User document created in MongoDB
+6. JWT signed: jwtService.sign({ sub: user._id, email, role })
+7. Response: { token, user: { id, name, email, role } }
+8. Frontend: localStorage.setItem('token', token)
+9. AuthContext sets user + token in React state
+10. Router redirects to /dashboard
 ```
 
-### Fetching Tasks (with Authorization)
+### Login
 
 ```
-1. User navigates to dashboard
-2. GET /tasks called with token
-3. Backend:
-   - JwtAuthGuard validates token
-   - Extracts userId and role
-   - If admin: return all tasks
-   - If member: filter WHERE (createdBy=userId OR assignedTo=userId)
-   - Apply optional status/priority filters
-   - Return array of Tasks
-4. Frontend displays filtered tasks in grid/list
+1. User submits LoginForm → POST /auth/login { email, password }
+2. LoginDto validated
+3. AuthService queries MongoDB by email → 401 UnauthorizedException if not found
+4. bcrypt.compare(plain, hash) → 401 if mismatch
+5. JWT signed with same payload shape → steps 7–10 identical to register
 ```
 
-### Updating a Task
+### Accessing a Protected REST Route
 
 ```
-1. User clicks edit on TaskCard
-2. TaskDialog opens with existing task data
-3. User modifies fields
-4. PATCH /tasks/:id with updated fields
-5. Backend:
-   - Validates token and task ownership
-   - If member: only creator can update (RolesGuard logic)
-   - Admin can update any task
-   - Validates DTO (partial update allowed)
-   - Updates document
-   - Returns updated Task
-6. Frontend refreshes list
+1. Frontend calls taskService.getTasks(filters, token)
+2. lib/api.ts injects header: Authorization: Bearer <token>
+3. JwtAuthGuard intercepts the incoming request
+4. PassportJS JwtStrategy extracts the token from the Authorization header
+5. jwtService.verify(token, JWT_SECRET) decodes the payload
+6. Strategy.validate() returns { userId, email, role } → stored as req.user
+7. @CurrentUser() decorator pulls req.user into the controller parameter
+8. If token is missing, malformed, or expired → 401 Unauthorized
 ```
 
-## Security Considerations
+### WebSocket Authentication
 
-### Password Security
-- Passwords hashed with bcrypt (10 rounds)
-- Never stored or returned in plain text
-- Comparison uses constant-time algorithm (bcrypt handles this)
-
-### JWT Security
-- Secret key stored in environment variable
-- Token expires after 24 hours
-- Payload includes role for quick authorization checks
-- Tokens validated on every protected request
-
-### Input Validation
-- All DTOs validated with class-validator
-- Email must be valid format
-- Passwords minimum 6 characters
-- Title required for tasks
-
-### Authorization
-- JwtAuthGuard ensures user is authenticated
-- RolesGuard checks roles for admin endpoints
-- Task access checks ensure members only see their tasks
-- SQL injection not applicable (using Mongoose, not raw SQL)
-
-## Error Handling
-
-### HTTP Status Codes
-- 200: Success (GET, PATCH)
-- 201: Resource created (POST)
-- 400: Bad request (validation error)
-- 401: Unauthorized (missing/invalid token)
-- 403: Forbidden (insufficient permissions)
-- 404: Not found (task doesn't exist)
-- 500: Server error
-
-### Exception Filters
-- BadRequestException: Input validation failures
-- UnauthorizedException: Auth failures
-- ForbiddenException: Permission denied
-- NotFoundException: Resource not found
-
-## Performance Considerations
-
-### Current Optimizations
-- **Indexing**: MongoDB should index email and createdBy fields
-- **Population**: Only populate user references when needed
-- **Filtering**: Filters applied at database level, not in memory
-- **Token caching**: Frontend caches token in localStorage
-
-### Future Optimizations
-- Add Redis caching for frequently accessed tasks
-- Implement pagination for large task lists
-- Add request rate limiting
-- Optimize MongoDB queries with explain()
-- Consider GraphQL for flexible queries
-
-## Scalability Path
-
-### Phase 1 (Current)
-- Single NestJS server
-- Single MongoDB instance
-- All users' tasks in single collection
-
-### Phase 2
-- Add Redis cache layer
-- Implement pagination
-- Add background job queue for email notifications
-
-### Phase 3
-- Horizontal scaling: Load balance multiple NestJS instances
-- Database sharding by userId
-- Separate read replicas for reporting
-
-### Phase 4
-- Microservices: Auth service, Task service, Notification service
-- Message queue for inter-service communication
-- Separate databases per service
-
-## Testing Strategy (Future)
-
-### Unit Tests
-- Service methods with mocked dependencies
-- Guard and decorator logic
-- Validation edge cases
-
-### Integration Tests
-- Full request/response cycles
-- Database operations
-- Auth flows
-
-### E2E Tests
-- Complete user workflows
-- Frontend + backend integration
-- Role-based access scenarios
-
-## Deployment
-
-### Backend Deployment
-```bash
-# Build
-npm run build
-
-# Start production
-npm run start:prod
+```
+1. useTaskSocket hook: io('http://localhost:3001/tasks', { auth: { token } })
+2. TasksGateway.afterInit() registers a server.use() middleware
+3. Middleware reads socket.handshake.auth.token
+4. jwtService.verify(token, JWT_SECRET) called synchronously
+5. Decoded user attached to socket as socket.user
+6. next() called → connection accepted → handleConnection fires
+7. If token is missing or invalid → next(new Error(...)) → socket is rejected
+8. Frontend connect_error listener catches this and shows a toast; stops reconnecting
 ```
 
-### Frontend Deployment
-```bash
-# Build
-npm run build
+### Token Lifecycle
 
-# Vercel deployment
-vercel deploy
-```
+- Stored in `localStorage` and rehydrated into `AuthContext` on every page load via `useEffect`
+- Expiry controlled by the `JWT_EXPIRATION` env var (default `24h`)
+- On logout: `localStorage` cleared, React state reset, Socket.IO disconnected (the `useTaskSocket` hook exits early when `token` is `null`)
 
-### Environment Setup
-- Set all .env variables in production platform
-- Ensure MongoDB connection string is production database
-- JWT_SECRET should be strong, random 32+ character string
-- FRONTEND_URL should be production frontend domain
+---
 
-## Monitoring & Debugging
+## 6. AI Tools Used
 
-### Logs
-- All errors logged to console
-- Consider Winston for file logging in production
-- Debug mode: `DEBUG=* npm run start:dev`
+**Tool: GitHub Copilot (Claude Sonnet) — used throughout**
 
-### Metrics to Monitor
-- API response times
-- Task creation success rate
-- Authentication failures
-- Database query performance
-- MongoDB connection pool status
+| Area | What was AI-generated | What I reviewed / changed |
+|------|-----------------------|--------------------------|
+| `tasks.gateway.ts` | Full WebSocket gateway scaffold with `@WebSocketGateway`, connection handlers, JWT middleware, and emit methods | Removed unnecessary `@SubscribeMessage` handlers (the gateway only broadcasts; it never listens to client messages). Added proper `forwardRef()` to break the circular dependency with `TasksService`. |
+| `hooks/use-task-socket.ts` | Socket.IO client hook with reconnection logic and Sonner toasts | Initial version listed the callback props as `useEffect` dependencies, causing the socket to reconnect on every render. Fixed by storing callbacks in `useRef` so only `token` changes trigger a reconnect. |
+| `dashboard/page.tsx` real-time integration | `useTaskSocket` wiring, Live/Offline badge, handler stubs | Initial handlers called `fetchTasks()` on every WebSocket event, defeating the point of real-time updates. Rewrote to use in-place `setTasks()` mutations (add to front, replace by `_id`, filter out by `_id`). |
+| `tasks.module.ts` | Module scaffold | Had to manually add `JwtModule` import (needed by the gateway for `JwtService`) and export `TasksGateway`. |
+| `main.ts` | Bootstrap code | Added `app.useWebSocketAdapter(new IoAdapter(app))` which was missing from the generated version. |
+| Initial boilerplate | Auth module, tasks module, schemas, DTOs, guards, decorators | Reviewed every file for correctness; adjusted field defaults, enum values, and error messages to match the required behaviour. |
+| `DashboardSidebar.tsx` | Nav item list | Caught and fixed the duplicate `key={item.href}` bug that caused a React console error (both items shared the same href). Changed to `key={item.label}`. |
 
-## Trade-offs Made
+---
 
-| Decision | Benefit | Trade-off |
-|----------|---------|-----------|
-| JWT Auth | Scalable, stateless | Token size in requests |
-| Monolithic | Simpler deployment | Single point of failure |
-| MongoDB | Flexible schema | No ACID transactions |
-| Context API | No extra deps | Limited for complex state |
-| REST API | Standard, easy | Not as efficient as GraphQL |
-| Class-validator | Automatic validation | Adds decorators complexity |
-| RolesGuard at handler level | Flexible control | Requires explicit setup per route |
+## 7. Decisions & Trade-offs
 
-## Maintenance & Debugging
+### JWT in `localStorage` vs `httpOnly` cookie
 
-### Common Issues
+**Decision:** `localStorage`
+**Reason:** Simple to implement, works seamlessly with the fetch-based API client, and the token is accessible to the Socket.IO handshake (cookies require extra configuration with Socket.IO). Sufficient for an assessment context.
+**Trade-off:** Vulnerable to XSS in theory. `httpOnly` cookies are more secure because JavaScript cannot read them. With more time I would migrate to `httpOnly` cookies with a `/auth/refresh` endpoint and CSRF protection.
 
-**Tasks show 403 error:**
-- Check user role and task ownership
-- Verify token hasn't expired
-- Check task createdBy vs current userId
+---
 
-**MongoDB connection errors:**
-- Verify connection string format
-- Check network connectivity
-- Ensure MongoDB service is running
+### REST + WebSocket vs GraphQL Subscriptions
 
-**Token errors:**
-- Clear localStorage and re-login
-- Check JWT_SECRET matches between sessions
-- Verify token expiration time
+**Decision:** REST for mutations/queries, Socket.IO for real-time.
+**Reason:** REST is explicit and well-understood. Socket.IO integrates cleanly with NestJS `@WebSocketGateway`. Each tool does one job well.
+**Trade-off:** Two separate connection types on the client. GraphQL subscriptions would unify queries and real-time into one protocol but add significant setup complexity (schema, resolvers, Apollo).
 
+---
+
+### Binary roles (admin / member) only
+
+**Decision:** Two roles — `admin` sees and modifies everything, `member` sees only their own tasks.
+**Reason:** Covers the stated requirements cleanly with a single `if (role !== UserRole.ADMIN)` check.
+**Trade-off:** No intermediate roles (e.g. team lead, viewer). A real product would likely need a permissions table rather than a hard-coded enum.
+
+---
+
+### No pagination on `GET /tasks`
+
+**Decision:** Return all matching tasks in one query.
+**Reason:** Fine for a small dataset in an assessment. Keeps the frontend simpler.
+**Trade-off:** Slow and data-heavy as task count grows. With more time I would add cursor-based pagination (`?cursor=<lastId>&limit=20`) on the API and infinite scroll in the UI.
+
+---
+
+### In-place state updates on WebSocket events vs re-fetching
+
+**Decision:** Mutate the `tasks` array directly inside socket event handlers.
+**Reason:** Re-fetching on every event causes a visible flicker and unnecessary database load under concurrent users.
+**Trade-off:** The frontend state can briefly be out of sync with the server's access-control rules (e.g. a member briefly sees a task emitted to them that the REST endpoint would have filtered out). Acceptable for this use case; would be addressed with per-user rooms in a production system.
+
+---
+
+### Monorepo (single repo, two folders) vs separate repositories
+
+**Decision:** Both frontend and backend in one repository.
+**Reason:** Simpler submission, no cross-repo coordination.
+**Trade-off:** The frontend `tsconfig.json` picks up backend source files and shows spurious NestJS decorator errors. In production I would use Turborepo or Nx with a shared `@taskflow/types` package, or keep them as separate repositories.
+
+---
+
+### What I would improve with more time
+
+1. **Pagination** — cursor-based API, infinite scroll on the frontend
+2. **`httpOnly` cookie auth** — more secure token storage, prevents XSS token theft
+3. **Optimistic UI updates** — update state before the server confirms, roll back on error
+4. **Unit + E2E tests** — Jest for service/guard logic, Playwright for full user workflows
+5. **Per-user Socket.IO rooms** — emit `task.created/updated/deleted` only to users who are allowed to see that task, rather than broadcasting to everyone
+6. **Rate limiting** — `@nestjs/throttler` on `/auth/login` and `/auth/register` to prevent brute-force
+7. **MongoDB indexes** — explicit compound indexes on `createdBy + status`, `assignedTo + status` for query performance at scale
